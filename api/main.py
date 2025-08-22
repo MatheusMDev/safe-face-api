@@ -17,6 +17,8 @@ faces_db = {}
 async def health():
     return {"status": "API online"}
 
+
+#precisa saber como vai vir as imagens
 @app.post("/recognize")
 async def recognize_face(file: UploadFile = File(...)):
     try:
@@ -41,15 +43,3 @@ async def verify_face(data: VerifyFaceRequest, file: UploadFile = File(...)):
     # fake comparison
     match = True
     return {"match": match}
-
-@app.get("/list-faces")
-async def list_faces():
-    return {"faces": list(faces_db.keys())}
-
-@app.delete("/delete-face/{name}")
-async def delete_face(name: str):
-    if name in faces_db:
-        del faces_db[name]
-        return {"message": f"Rosto de {name} removido."}
-    else:
-        raise HTTPException(status_code=404, detail="Rosto não encontrado")
