@@ -2,7 +2,7 @@
 from PIL import Image
 import numpy as np
 
-def preprocess_image(image: Image.Image, target_size=(160,160)):
+def preprocess_image(image: Image.Image, target_size=(260,260)):
     image = image.resize(target_size)
     image_array = np.array(image) / 255.0
     image_array = np.expand_dims(image_array, axis=0)
