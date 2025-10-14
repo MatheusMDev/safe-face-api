@@ -1,0 +1,6 @@
+#Bibliotecas
+fastapi
+uvicorn
+tensorflow
+pillow
+python-multipart
