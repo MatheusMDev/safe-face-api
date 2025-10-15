@@ -14,16 +14,20 @@ Este projeto serve como base inicial para autenticação e processamento de imag
 
 ---
 
-## Instalação
+## 1 - Instalação
 Clone este repositório:
 git clone https://github.com/MatheusMDev/safe-face-api.git
 
 
-### Ambiente virtual Python
+### 2 - Crie o Ambiente virtual Python
 python -m venv venv
 
-#### Windows
+#### 3 - Rode o seguinte comando no terminal 
 venv\Scripts\activate
 
-### Bibliotecas
+### 4 - Instale as Bibliotecas
 pip install -r requirements.txt
+
+### 5 - Rode o programa
+cd .\api\
+fastapi dev main.py

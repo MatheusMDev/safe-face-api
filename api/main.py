@@ -1,4 +1,7 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+# ============================================
+# Imports
+# ============================================
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.responses import JSONResponse
 # from api.models import RegisterFaceRequest, VerifyFaceRequest
 # from api.utils import preprocess_image, compare_embeddings
@@ -6,16 +9,72 @@ from fastapi.responses import JSONResponse
 # from PIL import Image
 import numpy as np
 
-app = FastAPI(title="Face Recognition API", version="1.0")
+
+# ============================================
+# App Config & OpenAPI (Swagger)
+# ============================================
+app = FastAPI(
+    title="Face Recognition API",
+    version="1.0",
+    description="API para autenticação/consulta de faces (MVP).",
+    openapi_tags=[
+        {"name": "Status", "description": "Rotas de monitoramento e saúde da API."},
+        {"name": "Reconhecimento Facial", "description": "Operações de cadastro, verificação e listagem de faces."},
+    ],
+)
 
 # Placeholder de “banco” de faces
 # faces_db = {}
 
 # model = tf.keras.models.load_model("app/face_model/model.h5") # futuro modelo
 
-@app.get("/health")
+
+# ============================================
+# Healthcheck
+# ============================================
+@app.get(
+    "/health",
+    tags=["Status"],
+    summary="Verificar saúde da API",
+    responses={
+        200: {
+            "description": "OK",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": 200,
+                        "msg": "API On-line."
+                    }
+                }
+            },
+        },
+        500: {
+            "description": "Erro interno",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "falha_simulada": {
+                            "summary": "Exemplo de falha simulada",
+                            "value": {"status": 500, "msg": "Erro interno: Falha simulada"}
+                        },
+                    }
+                }
+            },
+        },
+    },
+)
 async def health():
-    return {"status": "API online"}
+    try:
+        # forçar falha a fim de testar exception
+        # raise Exception("Falha simulada")
+        return {"status": 200, "msg": "API On-line"}
+    
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"status": 500, "msg": f"Erro interno: {str(e)}"}
+        )    
+
 
 # @app.post("/recognize")
 # async def recognize_face(file: UploadFile = File(...)):
@@ -42,9 +101,86 @@ async def health():
 #     match = True
 #     return {"match": match}
 
-# @app.get("/list-faces")
-# async def list_faces():
-#     return {"faces": list(faces_db.keys())}
+
+# ============================================
+# Mock / Teste (remover depois)
+# ============================================
+## teste -> remover depois
+faces_db = {
+    "1": ["face_1", "face_2"],
+    "2": ["face_3"]
+}
+
+
+# ============================================
+# Reconhecimento Facial - Listagem
+# ============================================
+## lista faces do cliente com base no seu id (consulta fechada para não gargalar bd)
+@app.get(
+    "/list-faces",
+    tags=["Reconhecimento Facial"],
+    summary="Listar faces de um cliente",
+    responses={
+        200: {
+            "description": "Faces encontradas",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": 200,
+                        "msg": "Faces encontradas com sucesso.",
+                        "faces": ["face_1", "face_2"]
+                    }
+                }
+            },
+        },
+        404: {
+            "description": "Cliente não encontrado",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": 404,
+                        "msg": "Cliente 'cliente_99' não encontrado."
+                    }
+                }
+            },
+        },
+        500: {
+            "description": "Erro interno",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "falha_simulada": {
+                            "summary": "Exemplo de falha simulada",
+                            "value": {"status": 500, "msg": "Erro interno ao listar faces: Falha simulada"}
+                        },
+                        "excecao_desconhecida": {
+                            "summary": "Exceção desconhecida",
+                            "value": {"status": 500, "msg": "Erro interno ao listar faces: UnknownError"}
+                        }
+                    }
+                }
+            },
+        },
+    },
+)
+async def list_faces(id_cliente: str = Query(..., description="ID do Cliente p/ Consulta Fechada")):
+    try:
+        if id_cliente not in faces_db:
+            return JSONResponse(
+                status_code=404,
+                content={"status": 404, "msg": f"Cliente '{id_cliente}' não encontrado."}
+            )
+
+        return JSONResponse(
+            status_code=200,
+            content={"status": 200, "msg": "Faces encontradas com sucesso.", "faces": faces_db[id_cliente]}
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": 500, "msg": f"Erro interno ao listar faces: {str(e)}"}
+        )
+    
 
 # @app.delete("/delete-face/{name}")
 # async def delete_face(name: str):
