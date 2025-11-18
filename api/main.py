@@ -3,6 +3,7 @@
 # ============================================
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 # from api.models import RegisterFaceRequest, VerifyFaceRequest
 # from api.utils import preprocess_image, compare_embeddings
 # import tensorflow as tf
@@ -27,6 +28,11 @@ app = FastAPI(
 # faces_db = {}
 
 # model = tf.keras.models.load_model("app/face_model/model.h5") # futuro modelo
+
+
+class RegisterFaceRequest(BaseModel):
+    id_cliente: str
+    face: str
 
 
 # ============================================
@@ -110,6 +116,71 @@ faces_db = {
     "1": ["face_1", "face_2"],
     "2": ["face_3"]
 }
+
+# ============================================
+# Reconhecimento Facial - Cadastro
+# ============================================
+@app.post(
+    "/register-face",
+    tags=["Reconhecimento Facial"],
+    summary="Cadastrar face para um cliente",
+    responses={
+        201: {
+            "description": "Face cadastrada",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": 201,
+                        "msg": "Face cadastrada com sucesso.",
+                        "faces": ["face_1", "face_2", "face_nova"]
+                    }
+                }
+            },
+        },
+        409: {
+            "description": "Face ja cadastrada",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": 409,
+                        "msg": "Face ja cadastrada para este cliente."
+                    }
+                }
+            },
+        },
+        500: {
+            "description": "Erro interno",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "status": 500,
+                        "msg": "Erro interno ao cadastrar face: Falha simulada"
+                    }
+                }
+            },
+        },
+    },
+)
+async def register_face(body: RegisterFaceRequest):
+    try:
+        customer_faces = faces_db.setdefault(body.id_cliente, [])
+
+        if body.face in customer_faces:
+            return JSONResponse(
+                status_code=409,
+                content={"status": 409, "msg": "Face ja cadastrada para este cliente."}
+            )
+
+        customer_faces.append(body.face)
+        return JSONResponse(
+            status_code=201,
+            content={"status": 201, "msg": "Face cadastrada com sucesso.", "faces": customer_faces}
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": 500, "msg": f"Erro interno ao cadastrar face: {str(e)}"}
+        )
 
 
 # ============================================
