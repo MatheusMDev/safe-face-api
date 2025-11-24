@@ -1,6 +1,10 @@
 #Bibliotecas
 fastapi
-uvicorn
 tensorflow
-pillow
+numpy
+opencv-python
+Pillow
+matplotlib
 python-multipart
+insightface
+firebase-admin
