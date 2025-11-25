@@ -31,3 +31,4 @@ pip install -r requirements.txt
 ### 5 - Rode o programa
 cd .\api\
 fastapi dev main.py
+python -m uvicorn main:app --reload

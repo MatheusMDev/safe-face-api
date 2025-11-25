@@ -316,6 +316,12 @@ async def register_face(body: RegisterFaceRequest):
     response_model=VerifyFaceResponse,
 )
 async def verify_face(body: VerifyFaceRequest):
+    # valores default, caso dê erro no meio do caminho
+    prob_real_cnn = 0.0
+    phone_score = 0.0
+    glare_score = 0.0
+    prob_real_adj = 0.0
+
     try:
         # 1) valida idToken -> uid
         try:
@@ -347,26 +353,29 @@ async def verify_face(body: VerifyFaceRequest):
         # 3) decodifica imagem
         bgr = decode_base64_to_bgr(body.image_base64)
 
-        # 4) anti-spoof
-        emb_try, face = get_best_face_embedding(bgr)
-        if emb_try is None or face is None:
+        # 4) obtém embedding e face (para pegar o bbox)
+        emb, face = get_best_face_embedding(bgr)
+        if emb is None or face is None:
             return VerifyFaceResponse(
                 status=200,
-                msg="Nenhum rosto detectado.",
-                spoof_label="UNKNOWN",
-                prob_real_cnn=0.0,
-                phone_score=0.0,
-                glare_score=0.0,
-                prob_real_adj=0.0,
+                msg="Nenhum rosto detectado na imagem.",
+                spoof_label="NO_FACE",
+                prob_real_cnn=prob_real_cnn,
+                phone_score=phone_score,
+                glare_score=glare_score,
+                prob_real_adj=prob_real_adj,
                 similarity=0.0,
                 passed=False,
             )
 
+        # monta o face_box (x1, y1, x2, y2) a partir do bbox do InsightFace
         x1, y1, x2, y2 = map(int, face.bbox.tolist())
         face_box = (x1, y1, x2, y2)
 
+        # 5) anti-spoof híbrido usando a imagem inteira + bbox do rosto
         label_spoof, prob_real_cnn, phone_score, glare_score, prob_real_adj = classify_spoof_hybrid(
-            bgr, face_box, debug=False
+            bgr,
+            face_box
         )
 
         if label_spoof != "REAL":
@@ -399,21 +408,21 @@ async def verify_face(body: VerifyFaceRequest):
         )
 
     except HTTPException:
+        # deixa passar erro HTTP (401 etc.)
         raise
     except Exception as e:
-        # se quiser, pode trocar para JSONResponse simples
+        # qualquer erro inesperado cai aqui
         return VerifyFaceResponse(
             status=500,
-            msg=f"Erro interno ao verificar face: {str(e)}",
+            msg=f"Erro interno ao verificar face: {repr(e)}",
             spoof_label="ERROR",
-            prob_real_cnn=0.0,
-            phone_score=0.0,
-            glare_score=0.0,
-            prob_real_adj=0.0,
+            prob_real_cnn=prob_real_cnn,
+            phone_score=phone_score,
+            glare_score=glare_score,
+            prob_real_adj=prob_real_adj,
             similarity=0.0,
             passed=False,
         )
-
 
 # ============================================
 # Reconhecimento Facial - Listagem (debug)
