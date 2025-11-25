@@ -9,7 +9,7 @@ from config import FACE_THRESHOLD
 from firebase_client import verify_id_token, save_face_embedding, get_face_embedding
 from anti_spoof import classify_spoof_hybrid
 from face_utils import get_best_face_embedding
-
+from typing import List
 
 # ============================================
 # App Config & OpenAPI (Swagger)
@@ -36,15 +36,17 @@ app.add_middleware(
 
 # ============================================
 # Models (requests / responses)
-# ============================================
+# ===========================================
+
 class RegisterFaceRequest(BaseModel):
     """
-    Cadastro de face:
-    - idToken: token de sessão do Firebase
-    - image_base64: foto do rosto em base64 (jpeg/png)
+    Cadastro de face com múltiplas imagens.
+    - idToken: token do Firebase
+    - images_base64: lista de 2+ imagens
     """
     idToken: str
-    image_base64: str
+    images_base64: List[str]
+
 
 
 class VerifyFaceRequest(BaseModel):
@@ -193,7 +195,9 @@ async def health():
 )
 async def register_face(body: RegisterFaceRequest):
     try:
-        # 1) valida idToken -> uid
+        # -------------------------------------------
+        # 1) Validar idToken
+        # -------------------------------------------
         try:
             uid = verify_id_token(body.idToken)
         except Exception as e:
@@ -202,47 +206,98 @@ async def register_face(body: RegisterFaceRequest):
                 detail={"status": 401, "msg": f"idToken inválido: {str(e)}"}
             )
 
-        # 2) decodifica imagem
-        bgr = decode_base64_to_bgr(body.image_base64)
-
-        # 3) anti-spoof híbrido
-        label_spoof, prob_real_cnn, phone_score, glare_score, prob_real_adj = classify_spoof_hybrid(bgr)
-
-        if label_spoof != "REAL":
+        # -------------------------------------------
+        # 2) Checar quantidade mínima = 2 imagens
+        # -------------------------------------------
+        if not body.images_base64 or len(body.images_base64) < 2:
             return JSONResponse(
                 status_code=400,
                 content={
                     "status": 400,
-                    "msg": "Anti-spoof reprovou a imagem.",
-                    "spoof_label": label_spoof,
-                    "prob_real_adj": prob_real_adj,
+                    "msg": "Envie ao menos 2 imagens para cadastro.",
                 }
             )
 
-        # 4) extrai embedding com InsightFace
-        emb, face = get_best_face_embedding(bgr)
-        if emb is None:
-            return JSONResponse(
-                status_code=400,
-                content={"status": 400, "msg": "Nenhum rosto detectado na imagem."}
+        valid_embs = []
+        debug_infos = []
+
+        # -------------------------------------------
+        # 3) Processar cada imagem do ENROLL
+        # -------------------------------------------
+        for idx, img_b64 in enumerate(body.images_base64, start=1):
+            # decodificar
+            try:
+                bgr = decode_base64_to_bgr(img_b64)
+            except Exception as e:
+                debug_infos.append({"index": idx, "msg": f"Base64 inválido: {str(e)}"})
+                continue
+
+            # detectar rosto + embedding
+            emb, face = get_best_face_embedding(bgr)
+            if emb is None or face is None:
+                debug_infos.append({"index": idx, "msg": "Nenhum rosto detectado"})
+                continue
+
+            # gerar face_box
+            x1, y1, x2, y2 = map(int, face.bbox.tolist())
+            face_box = (x1, y1, x2, y2)
+
+            # anti-spoof híbrido atualizado
+            label_spoof, prob_real_cnn, phone_score, glare_score, prob_adj = classify_spoof_hybrid(
+                bgr, face_box, debug=False
             )
 
-        # 5) salva embedding no Firestore vinculado ao uid
-        save_face_embedding(uid, emb.tolist())
+            debug_infos.append({
+                "index": idx,
+                "spoof_label": label_spoof,
+                "prob_real_cnn": prob_real_cnn,
+                "phone_score": phone_score,
+                "glare_score": glare_score,
+                "prob_real_adj": prob_adj,
+            })
+
+            # aceitar só imagens REAL
+            if label_spoof != "REAL":
+                continue
+
+            # acumular embedding
+            valid_embs.append(emb)
+
+        # -------------------------------------------
+        # 4) Precisa ter pelo menos 2 imagens REAL
+        # -------------------------------------------
+        if len(valid_embs) < 2:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": 400,
+                    "msg": "Menos de 2 imagens válidas (REAL). Cadastro rejeitado.",
+                    "debug": debug_infos,
+                }
+            )
+
+        # -------------------------------------------
+        # 5) Média dos embeddings (igual ao Colab)
+        # -------------------------------------------
+        mean_emb = np.mean(np.stack(valid_embs, axis=0), axis=0)
+        mean_emb = mean_emb / (np.linalg.norm(mean_emb) + 1e-10)
+
+        # salvar no Firebase
+        save_face_embedding(uid, mean_emb.tolist())
 
         return JSONResponse(
             status_code=201,
             content={
                 "status": 201,
-                "msg": "Face cadastrada com sucesso.",
+                "msg": "Face cadastrada com sucesso a partir de múltiplas imagens.",
                 "uid": uid,
-                "spoof_label": label_spoof,
-                "prob_real_adj": prob_real_adj,
+                "valid_images": len(valid_embs),
+                "total_images": len(body.images_base64),
+                "debug": debug_infos,
             }
         )
 
     except HTTPException:
-        # relança HTTPException do jeito que veio
         raise
     except Exception as e:
         return JSONResponse(
@@ -293,27 +348,31 @@ async def verify_face(body: VerifyFaceRequest):
         bgr = decode_base64_to_bgr(body.image_base64)
 
         # 4) anti-spoof
-        label_spoof, prob_real_cnn, phone_score, glare_score, prob_real_adj = classify_spoof_hybrid(bgr)
+        emb_try, face = get_best_face_embedding(bgr)
+        if emb_try is None or face is None:
+            return VerifyFaceResponse(
+                status=200,
+                msg="Nenhum rosto detectado.",
+                spoof_label="UNKNOWN",
+                prob_real_cnn=0.0,
+                phone_score=0.0,
+                glare_score=0.0,
+                prob_real_adj=0.0,
+                similarity=0.0,
+                passed=False,
+            )
+
+        x1, y1, x2, y2 = map(int, face.bbox.tolist())
+        face_box = (x1, y1, x2, y2)
+
+        label_spoof, prob_real_cnn, phone_score, glare_score, prob_real_adj = classify_spoof_hybrid(
+            bgr, face_box, debug=False
+        )
 
         if label_spoof != "REAL":
             return VerifyFaceResponse(
                 status=200,
                 msg="Anti-spoof reprovou a imagem.",
-                spoof_label=label_spoof,
-                prob_real_cnn=prob_real_cnn,
-                phone_score=phone_score,
-                glare_score=glare_score,
-                prob_real_adj=prob_real_adj,
-                similarity=0.0,
-                passed=False,
-            )
-
-        # 5) embedding da tentativa
-        emb, face = get_best_face_embedding(bgr)
-        if emb is None:
-            return VerifyFaceResponse(
-                status=200,
-                msg="Nenhum rosto detectado na imagem.",
                 spoof_label=label_spoof,
                 prob_real_cnn=prob_real_cnn,
                 phone_score=phone_score,

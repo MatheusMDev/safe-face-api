@@ -8,4 +8,5 @@ Pillow
 matplotlib
 python-multipart
 insightface
+onnxruntime
 firebase-admin

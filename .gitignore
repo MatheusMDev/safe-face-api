@@ -66,9 +66,9 @@ firebase_credentials.json
 # Se você quiser evitar subir modelos pesados no GitHub,
 # descomente as linhas abaixo:
 # ======================================
-# *.onnx
-# *.keras
-# *.h5
-# *.ckpt
-# *.pb
-# insightface_model/
+*.onnx
+*.keras
+*.h5
+*.ckpt
+*.pb
+insightface_model/

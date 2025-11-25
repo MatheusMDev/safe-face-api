@@ -7,10 +7,14 @@ from PIL import Image
 
 from config import ANTI_MODEL_PATH, THRESH_PATH, IMG_SIZE, SPOOF_THRESHOLD_DEFAULT
 
+# =============================
+# LOAD ANTI-SPOOF MODEL
+# =============================
 print("Carregando modelo anti-spoof...")
+
 try:
     ANTI_MODEL = tf.keras.models.load_model(ANTI_MODEL_PATH, compile=False)
-    print("Modelo anti-spoof carregado.")
+    print(f"Modelo anti-spoof carregado de: {ANTI_MODEL_PATH}")
 except Exception as e:
     raise RuntimeError(f"Erro ao carregar ANTI_MODEL: {e}")
 
@@ -25,78 +29,141 @@ except Exception as e:
     print("Erro ao abrir threshold.json:", e)
 
 
+# =============================
+# ANTI-SPOOF CNN (FACE CROP)
+# =============================
 def preprocess_spoof_pil(pil_img: Image.Image) -> np.ndarray:
     arr = np.asarray(pil_img.resize(IMG_SIZE).convert("RGB"), dtype=np.float32)
     return arr[None, ...]
 
 
-def predict_spoof_prob_real(bgr: np.ndarray) -> float:
-    pil = Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+def predict_spoof_prob_real_from_face(face_bgr: np.ndarray) -> float:
+    """
+    CNN só no rosto recortado.
+    """
+    if face_bgr is None or face_bgr.size == 0:
+        return 0.0
+    pil = Image.fromarray(cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB))
     x = preprocess_spoof_pil(pil)
-    prob_real = float(ANTI_MODEL.predict(x, verbose=0)[0][0])
-    return prob_real
+    prob = float(ANTI_MODEL.predict(x, verbose=0)[0][0])
+    return prob
 
-# Heurística 1: procura retângulos grandes com aspecto de tela de celular/monitor.
-def detect_phone_like_rectangle(bgr: np.ndarray, min_area_ratio: float = 0.05) -> float:
-    h, w = bgr.shape[:2]
+
+# =============================
+# HEURÍSTICA PHONE: BORDAS PRETAS + CENTRO CLARO
+# =============================
+def detect_phone_borders(
+    bgr: np.ndarray,
+    border_frac: float = 0.12,
+    dark_thr: int = 80,
+    center_thr: int = 110,
+    min_contrast: float = 20.0,
+) -> float:
+    """
+    Procura padrão típico de celular em pé:
+      - faixas escuras nas bordas esquerda/direita
+      - centro bem mais claro
+
+    Retorna score 0..1 (quanto maior, mais "cara de celular").
+    """
+    if bgr is None:
+        return 0.0
+
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    edges = cv2.Canny(blur, 50, 150)
+    h, w = gray.shape
 
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    best_score = 0.0
-    img_area = float(h * w)
+    bw = max(4, int(border_frac * w))  # largura das faixas laterais
+    if w <= 2 * bw:
+        return 0.0
 
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < img_area * 0.02 or area > img_area * 0.95:
-            continue
+    left = gray[:, :bw]
+    right = gray[:, w - bw :]
+    center = gray[:, bw : w - bw]
 
-        epsilon = 0.02 * cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, epsilon, True)
-        if len(approx) != 4:
-            continue
+    m_left = float(np.mean(left))
+    m_right = float(np.mean(right))
+    m_center = float(np.mean(center))
 
-        x, y, cw, ch = cv2.boundingRect(approx)
-        ar = max(cw, ch) / max(1, min(cw, ch))
+    # pelo menos UMA borda bem escura
+    side_dark = (m_left < dark_thr) or (m_right < dark_thr)
+    # centro razoavelmente iluminado
+    center_bright = m_center > center_thr
 
-        if 1.2 <= ar <= 2.8:
-            score = area / img_area
-            best_score = max(best_score, score)
+    # contraste centro versus borda mais clara (a melhor das duas)
+    side_max = max(m_left, m_right)
+    contrast = max(0.0, m_center - side_max)
 
-    return best_score
+    if side_dark and center_bright and contrast >= min_contrast:
+        score = contrast / 255.0  # normaliza contraste para 0..1
+    else:
+        score = 0.0
 
-#Heurística 2: detecta manchas muito brilhantes (reflexo de tela).
-def detect_screen_glare(bgr: np.ndarray, thr: int = 235, min_pixels: int = 400) -> float:
+    return score
+
+
+# =============================
+# HEURÍSTICA GLARE: PONTOS MUITO CLAROS
+# =============================
+def detect_glare_global(
+    bgr: np.ndarray, thr: int = 245, min_pixels: int = 400
+) -> float:
+    """
+    Mede % de pixels muito claros (glare geral).
+    Não derruba REAL sozinho, só em conjunto com bordas.
+    """
+    if bgr is None:
+        return 0.0
+
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     mask = gray > thr
     count = int(np.sum(mask))
     if count < min_pixels:
         return 0.0
-    h, w = gray.shape
-    total = h * w
-    score = count / float(total)
-    return score
+    return count / float(gray.size)
 
-#Função principal de decisão anti-spoof.
+
+# =============================
+# HÍBRIDO SIMPLES
+# =============================
 def classify_spoof_hybrid(
     bgr: np.ndarray,
-    spoof_thr: float | None = None,
-    phone_weight: float = 0.8,
-    phone_min_area: float = 0.01,
-    glare_min: float = 0.01,
+    face_box: tuple | None,
+    debug: bool = False,
 ):
-    if spoof_thr is None:
-        spoof_thr = SPOOF_THRESHOLD
+    """
+    - Recebe frame completo (bgr) + bounding box do rosto (face_box)
+    - CNN roda só no rosto recortado
+    - Heurísticas de borda preta + glare atuam sobre a imagem inteira
+    """
+    # crop do rosto
+    if face_box is not None:
+        x1, y1, x2, y2 = face_box
+        face_crop = bgr[y1:y2, x1:x2].copy()
+    else:
+        face_crop = bgr
 
-    prob_real_cnn = predict_spoof_prob_real(bgr)
-    phone_score = detect_phone_like_rectangle(bgr, min_area_ratio=phone_min_area)
-    glare_score = detect_screen_glare(bgr, thr=235, min_pixels=400)
+    prob_real_cnn = predict_spoof_prob_real_from_face(face_crop)
+    phone_score = detect_phone_borders(bgr)
+    glare_score = detect_glare_global(bgr)
 
-    prob_real_adj = prob_real_cnn
-    if phone_score >= phone_min_area or glare_score >= glare_min:
-        prob_real_adj = prob_real_cnn * (1.0 - phone_weight)
+    prob_adj = prob_real_cnn
 
-    label = "REAL" if prob_real_adj >= spoof_thr else "FAKE"
+    # Regra:
+    # - Só derruba para FAKE quando parecer muito celular:
+    #   bordas fortes OU bordas moderadas + glare.
+    if phone_score >= 0.10:
+        prob_adj = prob_real_cnn * 0.20  # derruba bem
+    elif phone_score >= 0.05 and glare_score >= 0.04:
+        prob_adj = prob_real_cnn * 0.25
 
-    return label, prob_real_cnn, phone_score, glare_score, prob_real_adj
+    # NÃO mexe em prob_adj só por glare; evita matar REAL por causa de luz.
+    label = "REAL" if prob_adj >= SPOOF_THRESHOLD else "FAKE"
+
+    if debug:
+        print(
+            f"[HYBRID] cnn={prob_real_cnn:.3f} | phoneBorder={phone_score:.3f} "
+            f"| glareGlob={glare_score:.3f} | adj={prob_adj:.3f} "
+            f"| thr={SPOOF_THRESHOLD:.3f} -> {label}"
+        )
+
+    return label, prob_real_cnn, phone_score, glare_score, prob_adj

@@ -38,4 +38,3 @@ def extract_face_crop(bgr: np.ndarray, face) -> np.ndarray:
     face_crop = bgr[y1:y2, x1:x2]
     face_crop = cv2.resize(face_crop, IMG_SIZE)
     return face_crop
-
