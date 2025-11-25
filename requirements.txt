@@ -7,6 +7,6 @@ opencv-python
 Pillow
 matplotlib
 python-multipart
-insightface
+insightface==0.7.3
 onnxruntime
 firebase-admin
