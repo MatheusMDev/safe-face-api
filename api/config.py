@@ -18,4 +18,4 @@ SPOOF_THRESHOLD_DEFAULT = 0.51
 
 # Firebase
 FIREBASE_CREDENTIALS      = os.path.join(BASE_DIR, "serviceAccountKey.json")
-FIREBASE_FACES_COLLECTION = "faces"  # nome da collection no Firestore
+FIREBASE_FACES_COLLECTION = "user"  # nome da collection no Firestore
