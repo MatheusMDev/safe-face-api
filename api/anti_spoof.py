@@ -54,9 +54,9 @@ def predict_spoof_prob_real_from_face(face_bgr: np.ndarray) -> float:
 # HEURÍSTICA PHONE: BORDAS PRETAS + CENTRO CLARO
 # =============================
 def detect_phone_borders(bgr,
-                         border_frac=0.10,
-                         min_diff_strong=25,  # Reduzido de 35 para 25
-                         min_diff_weak=10):   # Reduzido de 18 para 10
+                         border_frac=0.12,
+                         min_diff_strong=35,  # Reduzido de 35 para 25
+                         min_diff_weak=20):   # Reduzido de 18 para 10
     """
     Detecta padrão típico de celular em pé:
       - faixas mais escuras nas bordas esquerda/direita
@@ -104,7 +104,7 @@ def detect_phone_borders(bgr,
 # =============================
 # ROI em torno da face para procurar o celular
 # =============================
-def extract_phone_roi(bgr, face_box, margin_x=0.4, margin_y=0.4):
+def extract_phone_roi(bgr, face_box, margin_x=0.5, margin_y=0.4):
     """
     Cria um retângulo maior ao redor da face para procurar bordas de celular.
     margin_x / margin_y são frações da largura/altura da face.
@@ -129,7 +129,7 @@ def extract_phone_roi(bgr, face_box, margin_x=0.4, margin_y=0.4):
 # =============================
 # HEURÍSTICA GLARE: PONTOS MUITO CLAROS
 # =============================
-def detect_glare_global(bgr, thr=230, min_pixels=400):  # Reduzido de 235 para 230
+def detect_glare_global(bgr, thr=220, min_pixels=400):  # Reduzido de 235 para 230
     """
     Detecta brilho forte (glare) na imagem toda.
     """
@@ -169,11 +169,11 @@ def classify_spoof_hybrid(
 
     # ROI maior em torno da face para procurar celular
     # Using the adjusted margins as observed in the previous run's context
-    phone_roi   = extract_phone_roi(bgr, face_box, margin_x=0.4, margin_y=0.3)
-    phone_score = detect_phone_borders(phone_roi)
+    phone_roi   = extract_phone_roi(bgr, face_box, margin_x=0.5, margin_y=0.4)
+    phone_score = detect_phone_borders(phone_roi, border_frac=0.12, min_diff_strong=35, min_diff_weak=20)
 
     # glare global ainda na imagem toda
-    glare_score = detect_glare_global(bgr)
+    glare_score = detect_glare_global(bgr, thr=230, min_pixels=500)
 
     prob_adj = prob_real_cnn
 
