@@ -31,7 +31,7 @@ def save_face_embedding(uid: str, embedding: List[float]):
     doc_ref = db.collection(FIREBASE_FACES_COLLECTION).document(uid)
     doc_ref.set({
         "embedding": embedding,
-        "created_at": int(time.time() * 1000)
+        "created_at": firestore.SERVER_TIMESTAMP
     })
 
 
