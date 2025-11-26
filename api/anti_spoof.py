@@ -4,6 +4,7 @@ import numpy as np
 import cv2
 import tensorflow as tf
 from PIL import Image
+import matplotlib.pyplot as plt
 
 from config import ANTI_MODEL_PATH, THRESH_PATH, IMG_SIZE, SPOOF_THRESHOLD_DEFAULT
 
@@ -52,19 +53,18 @@ def predict_spoof_prob_real_from_face(face_bgr: np.ndarray) -> float:
 # =============================
 # HEURÍSTICA PHONE: BORDAS PRETAS + CENTRO CLARO
 # =============================
-def detect_phone_borders(
-    bgr: np.ndarray,
-    border_frac: float = 0.12,
-    dark_thr: int = 80,
-    center_thr: int = 110,
-    min_contrast: float = 20.0,
-) -> float:
+def detect_phone_borders(bgr,
+                         border_frac=0.10,
+                         min_diff_strong=25,  # Reduzido de 35 para 25
+                         min_diff_weak=10):   # Reduzido de 18 para 10
     """
-    Procura padrão típico de celular em pé:
-      - faixas escuras nas bordas esquerda/direita
-      - centro bem mais claro
+    Detecta padrão típico de celular em pé:
+      - faixas mais escuras nas bordas esquerda/direita
+      - centro mais claro (tela)
 
-    Retorna score 0..1 (quanto maior, mais "cara de celular").
+    Não depende de um threshold absoluto de "escuridão".
+    Usa diferença relativa de brilho entre centro e bordas.
+    Retorna score 0..1.
     """
     if bgr is None:
         return 0.0
@@ -72,50 +72,72 @@ def detect_phone_borders(
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     h, w = gray.shape
 
-    bw = max(4, int(border_frac * w))  # largura das faixas laterais
+    bw = max(4, int(border_frac * w))
     if w <= 2 * bw:
         return 0.0
 
-    left = gray[:, :bw]
-    right = gray[:, w - bw :]
-    center = gray[:, bw : w - bw]
+    left   = gray[:, :bw]
+    right  = gray[:, w - bw:]
+    center = gray[:, bw:w - bw]
 
-    m_left = float(np.mean(left))
-    m_right = float(np.mean(right))
+    m_left   = float(np.mean(left))
+    m_right  = float(np.mean(right))
     m_center = float(np.mean(center))
 
-    # pelo menos UMA borda bem escura
-    side_dark = (m_left < dark_thr) or (m_right < dark_thr)
-    # centro razoavelmente iluminado
-    center_bright = m_center > center_thr
-
-    # contraste centro versus borda mais clara (a melhor das duas)
     side_max = max(m_left, m_right)
-    contrast = max(0.0, m_center - side_max)
+    diff     = m_center - side_max   # pode ser negativa
 
-    if side_dark and center_bright and contrast >= min_contrast:
-        score = contrast / 255.0  # normaliza contraste para 0..1
-    else:
+    # Se o centro nem é mais claro, não parece tela
+    if diff <= 0:
+        return 0.0
+
+    # Mapeia diff em [0,1] considerando thresholds fraco/forte
+    if diff <= min_diff_weak:
         score = 0.0
+    elif diff >= min_diff_strong:
+        score = 1.0
+    else:
+        score = (diff - min_diff_weak) / float(min_diff_strong - min_diff_weak)
 
-    return score
+    return float(score)
 
+# =============================
+# ROI em torno da face para procurar o celular
+# =============================
+def extract_phone_roi(bgr, face_box, margin_x=0.4, margin_y=0.4):
+    """
+    Cria um retângulo maior ao redor da face para procurar bordas de celular.
+    margin_x / margin_y são frações da largura/altura da face.
+    """
+    h, w, _ = bgr.shape
+    if face_box is None:
+        return bgr
+
+    x1, y1, x2, y2 = face_box
+    fw = x2 - x1
+    fh = y2 - y1
+
+    # expande em torno da face
+    cx1 = max(0, int(x1 - fw * margin_x))
+    cx2 = min(w, int(x2 + fw * margin_x))
+    cy1 = max(0, int(y1 - fh * margin_y))
+    cy2 = min(h, int(y2 + fh * margin_y))
+
+    roi = bgr[cy1:cy2, cx1:cx2].copy()
+    return roi
 
 # =============================
 # HEURÍSTICA GLARE: PONTOS MUITO CLAROS
 # =============================
-def detect_glare_global(
-    bgr: np.ndarray, thr: int = 245, min_pixels: int = 400
-) -> float:
+def detect_glare_global(bgr, thr=230, min_pixels=400):  # Reduzido de 235 para 230
     """
-    Mede % de pixels muito claros (glare geral).
-    Não derruba REAL sozinho, só em conjunto com bordas.
+    Detecta brilho forte (glare) na imagem toda.
     """
     if bgr is None:
         return 0.0
 
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    mask = gray > thr
+    mask = gray > thr  # diminui o limiar de brilho para detectar reflexos mais baixos
     count = int(np.sum(mask))
     if count < min_pixels:
         return 0.0
@@ -140,30 +162,57 @@ def classify_spoof_hybrid(
         x1, y1, x2, y2 = face_box
         face_crop = bgr[y1:y2, x1:x2].copy()
     else:
+        # Fallback if no face_box is provided, use the whole image as face_crop
         face_crop = bgr
 
     prob_real_cnn = predict_spoof_prob_real_from_face(face_crop)
-    phone_score = detect_phone_borders(bgr)
+
+    # ROI maior em torno da face para procurar celular
+    # Using the adjusted margins as observed in the previous run's context
+    phone_roi   = extract_phone_roi(bgr, face_box, margin_x=0.4, margin_y=0.3)
+    phone_score = detect_phone_borders(phone_roi)
+
+    # glare global ainda na imagem toda
     glare_score = detect_glare_global(bgr)
 
     prob_adj = prob_real_cnn
 
-    # Regra:
-    # - Só derruba para FAKE quando parecer muito celular:
-    #   bordas fortes OU bordas moderadas + glare.
-    if phone_score >= 0.10:
-        prob_adj = prob_real_cnn * 0.20  # derruba bem
-    elif phone_score >= 0.05 and glare_score >= 0.04:
-        prob_adj = prob_real_cnn * 0.25
+    # =========================
+    # Regra dura: celular forte => FAKE direto
+    # =========================
+    if phone_score >= 0.30:   # Alterado para 0.30
+        prob_adj = 0.0
+        label = "FAKE"
+    else:
+        # Penalizações combinando glare + borda de celular
+        if phone_score >= 0.20 or glare_score >= 0.18:
+            prob_adj = prob_real_cnn * 0.10
+        elif phone_score >= 0.08 or glare_score >= 0.10:
+            prob_adj = prob_real_cnn * 0.30
 
-    # NÃO mexe em prob_adj só por glare; evita matar REAL por causa de luz.
-    label = "REAL" if prob_adj >= SPOOF_THRESHOLD else "FAKE"
+        label = "REAL" if prob_adj >= SPOOF_THRESHOLD else "FAKE"
+
+    print(
+        f"[HYBRID] cnn={prob_real_cnn:.3f} | phoneBorder={phone_score:.3f} "
+        f"| glareGlob={glare_score:.3f} | adj={prob_adj:.3f} "
+        f"| thr={SPOOF_THRESHOLD:.3f} -> {label}"
+    )
 
     if debug:
-        print(
-            f"[HYBRID] cnn={prob_real_cnn:.3f} | phoneBorder={phone_score:.3f} "
-            f"| glareGlob={glare_score:.3f} | adj={prob_adj:.3f} "
-            f"| thr={SPOOF_THRESHOLD:.3f} -> {label}"
-        )
+        # debug visual das bordas no ROI do celular
+        try:
+            gray = cv2.cvtColor(phone_roi, cv2.COLOR_BGR2GRAY)
+            h, w = gray.shape
+            bw = max(4, int(0.10 * w))
+            dbg = phone_roi.copy()
+            cv2.rectangle(dbg, (0, 0), (bw, h), (255, 0, 0), 2)
+            cv2.rectangle(dbg, (w - bw, 0), (w, h), (255, 0, 0), 2)
+            plt.figure(figsize=(5, 5))
+            plt.imshow(cv2.cvtColor(dbg, cv2.COLOR_BGR2RGB))
+            plt.axis("off")
+            plt.title(f"phoneBorder={phone_score:.3f}, glare={glare_score:.3f}")
+            plt.show()
+        except Exception as e:
+            print("Erro no debug visual de phone_roi:", e)
 
     return label, prob_real_cnn, phone_score, glare_score, prob_adj
