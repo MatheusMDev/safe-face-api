@@ -2,5 +2,11 @@
 fastapi
 uvicorn
 tensorflow
-pillow
+numpy
+opencv-python
+Pillow
+matplotlib
 python-multipart
+insightface==0.7.3
+onnxruntime
+firebase-admin

@@ -1,28 +1,74 @@
-# Ambiente virtual
+# ======================================
+# AMBIENTE VIRTUAL
+# ======================================
 venv/
-.env
+ENV/
+env/
+.venv/
 *.env
+.env
 
-# Arquivos de cache do Python
+# ======================================
+# PYTHON CACHE
+# ======================================
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.pdb
 
-# Logs
+# ======================================
+# LOGS
+# ======================================
 *.log
+logs/
 
-# Configurações do VS Code
+# ======================================
+# VS CODE
+# ======================================
 .vscode/
+.vscode/*
 
-# Arquivos temporários de sistema
+# ======================================
+# SISTEMA / LIXO
+# ======================================
 .DS_Store
 Thumbs.db
 
-# Arquivos de build/distribuição
+# ======================================
+# BUILD / DISTRIBUIÇÃO
+# ======================================
 build/
 dist/
 *.egg-info/
+*.whl
 
-# Jupyter Notebooks checkpoints (se usar)
+# ======================================
+# FASTAPI / UVICORN
+# ======================================
+*.sqlite3
+*.db
+*.pid
+
+# ======================================
+# NOTEBOOKS
+# ======================================
 .ipynb_checkpoints/
+
+# ======================================
+# FIREBASE / SEGREDOS
+# ======================================
+serviceAccountKey.json
+firebase_credentials.json
+
+# ======================================
+# MODELOS DE IA (OPCIONAL)
+# Se você quiser evitar subir modelos pesados no GitHub,
+# descomente as linhas abaixo:
+# ======================================
+*.onnx
+*.keras
+*.h5
+*.ckpt
+*.pb
+insightface_model/

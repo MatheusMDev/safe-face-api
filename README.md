@@ -6,6 +6,7 @@ Este projeto serve como base inicial para autenticação e processamento de imag
 ---
 
 ## Tecnologias utilizadas
+- **Python 3.10.11** →  versão correta para utilizar API 
 - **FastAPI** → criação da API e documentação automática (Swagger)
 - **Uvicorn** → servidor ASGI para rodar a API
 - **TensorFlow** → rede neural para reconhecimento facial
@@ -31,3 +32,4 @@ pip install -r requirements.txt
 ### 5 - Rode o programa
 cd .\api\
 fastapi dev main.py
+python -m uvicorn main:app --reload
