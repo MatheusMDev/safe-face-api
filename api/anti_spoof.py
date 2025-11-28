@@ -143,6 +143,31 @@ def detect_glare_global(bgr, thr=220, min_pixels=400):  # Reduzido de 235 para 2
         return 0.0
     return count / float(gray.size)
 
+def detect_glare_on_roi(bgr, face_box, thr=220, min_pixels=1500):
+    if bgr is None or face_box is None:
+        return 0.0
+
+    x1, y1, x2, y2 = face_box
+    h, w, _ = bgr.shape
+
+    fw = x2 - x1
+    fh = y2 - y1
+
+    # ROI um pouco maior em torno da face
+    rx1 = max(0, int(x1 - 0.3 * fw))
+    rx2 = min(w, int(x2 + 0.3 * fw))
+    ry1 = max(0, int(y1 - 0.3 * fh))
+    ry2 = min(h, int(y2 + 0.3 * fh))
+
+    roi = bgr[ry1:ry2, rx1:rx2]
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+
+    mask = gray > thr      # só MUITO claro
+    count = int(np.sum(mask))
+    if count < min_pixels:
+        return 0.0
+    return count / float(gray.size)
+
 
 # =============================
 # HÍBRIDO SIMPLES
@@ -173,7 +198,7 @@ def classify_spoof_hybrid(
     phone_score = detect_phone_borders(phone_roi, border_frac=0.12, min_diff_strong=35, min_diff_weak=20)
 
     # glare global ainda na imagem toda
-    glare_score = detect_glare_global(bgr, thr=230, min_pixels=500)
+    glare_score = detect_glare_on_roi(bgr, face_box, thr=240, min_pixels=1500)
 
     prob_adj = prob_real_cnn
 
