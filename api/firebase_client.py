@@ -29,9 +29,8 @@ def save_face_embedding(uid: str, embedding: List[float]):
     Salva/atualiza o embedding de face do usuário no Firestore.
     """
     doc_ref = db.collection(FIREBASE_FACES_COLLECTION).document(uid)
-    doc_ref.set({
-        "embedding": embedding,
-    })
+    # merge=True garante que apenas o campo embedding seja atualizado, sem sobrescrever outros dados do usuario
+    doc_ref.set({"embedding": embedding}, merge=True)
 
 
 def get_face_embedding(uid: str) -> Optional[List[float]]:

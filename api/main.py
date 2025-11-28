@@ -9,7 +9,7 @@ from config import FACE_THRESHOLD
 from firebase_client import verify_id_token, save_face_embedding, get_face_embedding
 from anti_spoof import classify_spoof_hybrid
 from face_utils import get_best_face_embedding
-from typing import List
+from typing import List, Optional
 
 # ============================================
 # App Config & OpenAPI (Swagger)
@@ -41,10 +41,12 @@ app.add_middleware(
 class RegisterFaceRequest(BaseModel):
     """
     Cadastro de face com múltiplas imagens.
-    - idToken: token do Firebase
+    - uid: opcional, uid do usuario ja criado no Firestore
+    - idToken: token do Firebase (alternativa para obter o uid)
     - images_base64: lista de 2+ imagens
     """
-    idToken: str
+    uid: Optional[str] = None
+    idToken: Optional[str] = None
     images_base64: List[str]
 
 
@@ -196,14 +198,24 @@ async def health():
 async def register_face(body: RegisterFaceRequest):
     try:
         # -------------------------------------------
-        # 1) Validar idToken
+        # 1) Resolver o uid (prioriza uid enviado; senao, valida idToken)
         # -------------------------------------------
-        try:
-            uid = verify_id_token(body.idToken)
-        except Exception as e:
+        uid = body.uid
+        token_uid = None
+        if body.idToken:
+            try:
+                token_uid = verify_id_token(body.idToken)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=401,
+                    detail={"status": 401, "msg": f"idToken invalido: {str(e)}"}
+                )
+
+        uid = uid or token_uid
+        if not uid:
             raise HTTPException(
-                status_code=401,
-                detail={"status": 401, "msg": f"idToken inválido: {str(e)}"}
+                status_code=400,
+                detail={"status": 400, "msg": "Envie uid ou idToken para cadastrar a face."}
             )
 
         # -------------------------------------------
