@@ -49,15 +49,15 @@ class RegisterFaceRequest(BaseModel):
     idToken: Optional[str] = None
     images_base64: List[str]
 
-
-
 class VerifyFaceRequest(BaseModel):
     """
-    Verificação de face:
-    - idToken: token de sessão do Firebase (para descobrir uid)
-    - image_base64: foto atual para autenticação
+    Verificacao de face:
+    - uid: opcional, uid ja conhecido do usuario no Firebase
+    - idToken: token de sessao do Firebase (para descobrir uid)
+    - image_base64: foto atual para autenticacao
     """
-    idToken: str
+    uid: Optional[str] = None
+    idToken: Optional[str] = None
     image_base64: str
 
 
@@ -318,30 +318,31 @@ async def register_face(body: RegisterFaceRequest):
         )
 
 
-# ============================================
-# Reconhecimento Facial - Verificação (VERIFY)
-# ============================================
-@app.post(
-    "/verify-face",
-    tags=["Reconhecimento Facial"],
-    summary="Verificar face do cliente (comparar com embedding salvo)",
-    response_model=VerifyFaceResponse,
-)
+@app.post("/verify-face", tags=["Reconhecimento Facial"], summary="Verificar face do cliente (comparar com embedding salvo)", response_model=VerifyFaceResponse)
 async def verify_face(body: VerifyFaceRequest):
-    # valores default, caso dê erro no meio do caminho
     prob_real_cnn = 0.0
     phone_score = 0.0
     glare_score = 0.0
     prob_real_adj = 0.0
 
     try:
-        # 1) valida idToken -> uid
-        try:
-            uid = verify_id_token(body.idToken)
-        except Exception as e:
+        # 1) Resolver o uid (prioriza uid enviado; senao, valida idToken)
+        uid = getattr(body, "uid", None)
+        token_uid = None
+        if body.idToken:
+            try:
+                token_uid = verify_id_token(body.idToken)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=401,
+                    detail={"status": 401, "msg": f"idToken invalido: {str(e)}"}
+                )
+
+        uid = uid or token_uid
+        if not uid:
             raise HTTPException(
-                status_code=401,
-                detail={"status": 401, "msg": f"idToken inválido: {str(e)}"}
+                status_code=400,
+                detail={"status": 400, "msg": "Envie uid ou idToken para verificar a face."}
             )
 
         # 2) carrega embedding de referência do Firestore
@@ -349,7 +350,7 @@ async def verify_face(body: VerifyFaceRequest):
         if db_emb_list is None:
             return VerifyFaceResponse(
                 status=404,
-                msg="Usuário não possui face cadastrada.",
+                msg="Usuario nao possui face cadastrada.",
                 spoof_label="UNKNOWN",
                 prob_real_cnn=0.0,
                 phone_score=0.0,
@@ -380,11 +381,11 @@ async def verify_face(body: VerifyFaceRequest):
                 passed=False,
             )
 
-        # monta o face_box (x1, y1, x2, y2) a partir do bbox do InsightFace
+        # monta o face_box (x1, y1, x2, y2)
         x1, y1, x2, y2 = map(int, face.bbox.tolist())
         face_box = (x1, y1, x2, y2)
 
-        # 5) anti-spoof híbrido usando a imagem inteira + bbox do rosto
+        # 5) anti-spoof hibrido
         label_spoof, prob_real_cnn, phone_score, glare_score, prob_real_adj = classify_spoof_hybrid(
             bgr,
             face_box
@@ -409,7 +410,7 @@ async def verify_face(body: VerifyFaceRequest):
 
         return VerifyFaceResponse(
             status=200,
-            msg="Verificação realizada.",
+            msg="Verificacao realizada.",
             spoof_label=label_spoof,
             prob_real_cnn=prob_real_cnn,
             phone_score=phone_score,
@@ -420,10 +421,8 @@ async def verify_face(body: VerifyFaceRequest):
         )
 
     except HTTPException:
-        # deixa passar erro HTTP (401 etc.)
         raise
     except Exception as e:
-        # qualquer erro inesperado cai aqui
         return VerifyFaceResponse(
             status=500,
             msg=f"Erro interno ao verificar face: {repr(e)}",
